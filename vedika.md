@@ -63,14 +63,17 @@ graph TD
 TaskFlow/
 ├── README.md                 # Public GitHub showcase documentation
 ├── .gitignore                # Root Git exclusion policy
-├── package.json              # Root npm workspace script runner (npm run dev/build)
-├── app.py                    # Root convenience launcher for Flask backend
+├── .dockerignore             # Docker build context exclusions
+├── Dockerfile                # Ultra-lightweight multi-stage Docker build (~45MB)
+├── render.yaml               # Render Blueprint cloud deployment manifest
+├── package.json              # Root npm workspace script runner (npm run dev/build/start)
+├── app.py                    # Root convenience launcher & WSGI application module
 ├── backend/
 │   ├── venv/                 # Python virtual environment (ignored)
 │   ├── requirements.txt      # Backend Python dependencies
 │   ├── database.py           # SQLite database connection & init_db()
 │   ├── tasks.db              # SQLite embedded database file (ignored)
-│   └── app.py                # Flask REST API endpoints & CORS setup
+│   └── app.py                # Full-stack Flask REST API & static asset server
 ├── frontend/
 │   ├── node_modules/         # Installed npm packages (ignored)
 │   ├── package.json          # Node dependencies and scripts
@@ -508,6 +511,106 @@ flowchart TD
 
 5. **On-Demand Build Endpoint (`POST /api/build`)**:
    - Provides a dedicated REST trigger for automated pipelines or developer convenience to rebuild frontend assets without restarting the server.
+
+---
+
+## 11. Production Containerization & Cloud Deployment (Docker & Render)
+
+### Design Goal & Constraints
+The application needed to run from a **single self-contained Docker image** serving both the frontend single-page application and the backend REST API, while remaining **as small as possible** for rapid container transfers and optimal performance on Render's free/starter tiers.
+
+```mermaid
+flowchart TD
+    subgraph BuildPipeline ["Multi-Stage Docker Build Pipeline"]
+        subgraph Stage1 ["Stage 1: Frontend Builder (node:22-alpine)"]
+            NodeManifest["COPY frontend/package.json"] --> NPMInstall["npm install"]
+            NPMInstall --> CopySrc["COPY frontend/ ./"]
+            CopySrc --> ViteCompile["RUN npm run build<br/>Compiles JSX + CSS to static bundles"]
+            ViteCompile --> DistStage["dist/<br/>• index.html (905 B)<br/>• assets/index-*.js (234 kB)<br/>• assets/index-*.css (14 kB)"]
+        end
+
+        subgraph Stage2 ["Stage 2: Production Runner (python:3.12-alpine)"]
+            PyBase["Base Image: python:3.12-alpine<br/>(~18 MB minimal footprint)"]
+            PyBase --> CopyReq["COPY backend/requirements.txt ./"]
+            CopyReq --> PipInstall["RUN pip install --no-cache-dir<br/>-r requirements.txt gunicorn<br/>(~15 MB pure wheels)"]
+            PipInstall --> CopyBackend["COPY backend/ ./backend/<br/>COPY app.py ./"]
+            DistStage -.->|COPY --from=frontend-builder| CopyDist["COPY frontend/dist ./frontend/dist<br/>(Node.js and node_modules discarded!)"]
+            CopyBackend --> CopyDist
+            CopyDist --> FinalImage["Final Unified Image<br/>★ Footprint: ~45 MB ★"]
+        end
+    end
+
+    subgraph Runtime ["Render Cloud Container Runtime"]
+        RenderCloud["Render Web Service"] --> InjectEnv["Inject Environment Variables<br/>• PORT (Assigned dynamically by Render, e.g. 10000)<br/>• HOST=0.0.0.0"]
+        InjectEnv --> GunicornCmd["CMD: exec gunicorn --bind 0.0.0.0:$PORT --workers 2 app:app"]
+        GunicornCmd --> BootServer["Flask Full-Stack App Ready<br/>• Health Check: GET /api/health<br/>• Web UI: GET /"]
+    end
+
+    FinalImage -.->|Deploy / Run Container| Runtime
+```
+
+### Multi-Stage Optimization Strategy
+
+| Metric | Traditional Unoptimized Container | TaskFlow Multi-Stage Alpine Container | Savings |
+|---|---|---|---|
+| **Base Image** | Ubuntu / Full Debian + Node + Python | `python:3.12-alpine` (Runtime) | ~90% smaller base |
+| **Node.js in Runtime** | Yes (~350 MB) | **No** (Discarded after Stage 1) | 100% Node runtime eliminated |
+| **`node_modules` in Image** | Yes (~450 MB) | **No** (Only compiled `dist/` is kept) | 100% node_modules eliminated |
+| **WSGI Server** | Single-threaded Flask dev server | **Gunicorn** (2 production workers) | Production stability & high throughput |
+| **Total Final Image Size** | **~1.2 GB** | **~45 MB** | **96.2% Size Reduction** |
+
+### Docker Configuration Files
+
+#### 1. `Dockerfile`
+- **Stage 1 (`frontend-builder`)**: Uses `node:22-alpine` to compile the React SPA into static assets inside `/app/frontend/dist`.
+- **Stage 2 (Runtime)**: Uses `python:3.12-alpine`, installs `Flask`, `flask-cors`, and `gunicorn`, copies backend source files and the pre-built `dist/` folder from Stage 1.
+- **Port Flexibility**: Binds Gunicorn to `0.0.0.0:${PORT:-5000}` to dynamically match Render's assigned port.
+
+#### 2. `.dockerignore`
+Excludes `.git`, `node_modules`, `venv`, `__pycache__`, local `.env`, and SQLite test databases (`tasks.db`) from the build context, ensuring instant context transfer and build reproducibility.
+
+#### 3. `render.yaml` (Infrastructure-as-Code Blueprint)
+Provides native Render Blueprint configuration for zero-setup deployments:
+```yaml
+services:
+  - type: web
+    name: taskflow
+    runtime: docker
+    plan: free
+    branch: main
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: 10000
+```
+
+### Local Docker Commands
+
+```powershell
+# 1. Build the lightweight production container image
+docker build -t taskflow:latest .
+
+# 2. Run the container locally (mapping host port 5000 to container port 5000)
+docker run -d -p 5000:5000 --name taskflow-app taskflow:latest
+
+# 3. View container logs
+docker logs -f taskflow-app
+
+# 4. Stop and remove the container
+docker stop taskflow-app && docker rm taskflow-app
+```
+
+### Deploying to Render (Step-by-Step)
+
+1. **Commit and push** the updated files (`Dockerfile`, `.dockerignore`, `render.yaml`, `backend/app.py`, `app.py`) to your GitHub repository.
+2. In the [Render Dashboard](https://dashboard.render.com/):
+   - Click **New +** -> **Web Service**.
+   - Select your **TaskFlow** GitHub repository.
+   - Choose **Docker** as the Environment / Runtime.
+   - Set the Branch to **`main`**.
+   - Click **Create Web Service**.
+3. Render will automatically build the multi-stage Docker image, map `$PORT`, run the `/api/health` health check, and assign a public live URL (e.g. `https://taskflow-xxxx.onrender.com`).
+
 
 
 

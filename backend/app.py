@@ -36,7 +36,20 @@ def build_frontend():
     Build the React frontend production bundle using Vite.
     Runs 'npm run build' inside the frontend directory so that
     the Flask backend serves the up-to-date application bundle.
+    If npm is not installed (e.g. in lightweight production Docker image)
+    and the compiled bundle already exists, serving proceeds seamlessly.
     """
+    import shutil
+    index_file = os.path.join(FRONTEND_DIST, "index.html")
+    has_prebuilt_dist = os.path.exists(index_file)
+
+    if not shutil.which("npm"):
+        if has_prebuilt_dist:
+            print(" [TaskFlow] Serving pre-compiled React frontend bundle from frontend/dist.", flush=True)
+            return True
+        print(f" [TaskFlow WARNING] 'npm' command not found and bundle missing at: {index_file}", flush=True)
+        return False
+
     print("\n" + "=" * 60, flush=True)
     print(" [TaskFlow] Building React frontend via Vite...", flush=True)
     print(f" Working Directory: {FRONTEND_DIR}", flush=True)
@@ -484,19 +497,25 @@ def not_found(error):
 # --------------------------------------------------------------------------
 # Server Startup Function & Entry Point
 # --------------------------------------------------------------------------
-def start_server(host="127.0.0.1", port=5000, debug=True):
+def start_server(host=None, port=None, debug=None):
     """
     Starts the full-stack TaskFlow server.
     Ensures the SQLite database is initialized and builds the React frontend
     before serving traffic. Also rebuilds whenever the server reloads.
+    Supports environment variables: HOST, PORT, FLASK_DEBUG for containerized deployment.
     """
-    # 1. Initialize SQLite schema
+    # 1. Resolve host, port, and debug mode dynamically
+    if host is None:
+        host = os.environ.get("HOST", "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1")
+    if port is None:
+        port = int(os.environ.get("PORT", 5000))
+    if debug is None:
+        debug = os.environ.get("FLASK_DEBUG", "true").lower() in ("true", "1")
+
+    # 2. Initialize SQLite schema
     init_db()
 
-    # 2. Build frontend on server startup or reload.
-    # In Flask debug mode, Werkzeug reloader runs two processes: monitor and worker.
-    # The worker process has WERKZEUG_RUN_MAIN == 'true'.
-    # This ensures building runs on every auto-restart and once on initial startup.
+    # 3. Build frontend on server startup or reload
     is_worker = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
     index_missing = not os.path.exists(os.path.join(FRONTEND_DIST, "index.html"))
     if is_worker or not debug or index_missing:
@@ -514,4 +533,4 @@ def start_server(host="127.0.0.1", port=5000, debug=True):
 
 
 if __name__ == "__main__":
-    start_server(host="127.0.0.1", port=5000, debug=True)
+    start_server()

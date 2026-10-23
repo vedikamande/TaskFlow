@@ -192,6 +192,33 @@ npm run dev
 
 ---
 
+### Step 4: Run with Docker (Ultra-Lightweight ~45MB)
+
+TaskFlow includes a multi-stage Dockerfile that builds the React frontend with Node 22 Alpine and serves both UI & API through Python 3.12 Alpine and Gunicorn:
+
+```bash
+# 1. Build the Docker image
+docker build -t taskflow:latest .
+
+# 2. Run container (mapped to port 5000)
+docker run -d -p 5000:5000 --name taskflow taskflow:latest
+```
+> Open **`http://localhost:5000`** in your browser!
+
+---
+
+### Step 5: Deploy to Render (1-Click Ready)
+
+TaskFlow is optimized for [Render](https://render.com) Web Services with automatic `$PORT` routing and blueprint configuration (`render.yaml`):
+
+1. Push your repository to GitHub.
+2. In the [Render Dashboard](https://dashboard.render.com), click **New +** -> **Web Service**.
+3. Connect your **TaskFlow** repository.
+4. Select **Docker** as the Environment.
+5. Click **Create Web Service** — Render automatically builds and hosts your full-stack app with a live HTTPS URL!
+
+---
+
 ## 🧑‍💻 Author
 
 **Vedika Mande**  

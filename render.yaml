@@ -1,0 +1,12 @@
+# Render Blueprint Specification for TaskFlow
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: taskflow
+    runtime: docker
+    plan: free
+    branch: main
+    healthCheckPath: /api/health
+    envVars:
+      - key: PORT
+        value: 10000

@@ -1,0 +1,43 @@
+# Version control & cache files
+.git/
+.gitignore
+.gitattributes
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node.js dependencies & caches
+node_modules/
+frontend/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python virtual environments
+venv/
+.venv/
+backend/venv/
+backend/.venv/
+
+# Environment files & secrets
+.env
+.env.*
+*.local
+
+# Local SQLite databases (created fresh on container boot via init_db)
+*.db
+*.sqlite
+*.sqlite3
+tasks.db
+backend/tasks.db
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Antigravity & Agent workspace artifacts
+.agents/
+.gemini/

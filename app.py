@@ -49,5 +49,5 @@ build_frontend = taskflow_backend.build_frontend
 start_server = taskflow_backend.start_server
 
 if __name__ == "__main__":
-    start_server(host="127.0.0.1", port=5000, debug=True)
+    start_server()
 
