@@ -1,0 +1,91 @@
+# ==============================================================================
+# TaskFlow - Git Ignore Configuration
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Dependencies & Virtual Environments
+# ------------------------------------------------------------------------------
+# Node.js dependencies
+node_modules/
+frontend/node_modules/
+package-lock.json.bak
+
+# Python virtual environments
+venv/
+backend/venv/
+backend/backend/venv/
+.venv/
+env/
+ENV/
+
+# ------------------------------------------------------------------------------
+# 2. Python Caches & Bytecode
+# ------------------------------------------------------------------------------
+__pycache__/
+*/__pycache__/
+*/**/__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+
+# ------------------------------------------------------------------------------
+# 3. Environment Variables, Secrets & Private Credentials
+# ------------------------------------------------------------------------------
+# Never commit private keys, secrets, or environment config files
+.env
+.env.*
+!.env.example
+*.env
+*.pem
+*.key
+*.cert
+secrets.json
+
+# ------------------------------------------------------------------------------
+# 4. Database Files (Personal Development Databases)
+# ------------------------------------------------------------------------------
+# Exclude SQLite database files so fresh environments initialize cleanly
+# via init_db() without leaking personal or local test records.
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+tasks.db
+backend/tasks.db
+backend/backend/tasks.db
+
+# ------------------------------------------------------------------------------
+# 5. Build Artifacts & Distribution
+# ------------------------------------------------------------------------------
+# Frontend production build output
+dist/
+frontend/dist/
+dist-ssr/
+build/
+*.egg-info/
+
+# ------------------------------------------------------------------------------
+# 6. Logs & Debugging Files
+# ------------------------------------------------------------------------------
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ------------------------------------------------------------------------------
+# 7. Operating System & Editor Artifacts
+# ------------------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
