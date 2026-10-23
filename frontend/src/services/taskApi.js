@@ -12,8 +12,9 @@
  * 5. deleteTask(id)        -> DELETE /api/tasks/:id
  */
 
-// Target URL of the running Flask REST API
-const API_BASE_URL = 'http://127.0.0.1:5000/api';
+// Target URL of the running Flask REST API.
+// In production (served by Flask) or in Vite dev (proxied via /api), '/api' points to Flask.
+const API_BASE_URL = '/api';
 
 /**
  * Internal helper to parse responses and handle HTTP errors gracefully.

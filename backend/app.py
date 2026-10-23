@@ -17,12 +17,66 @@ Architecture Highlights:
 5. CORS enabled: Allows seamless interaction with React (Vite dev server).
 """
 
-from flask import Flask, jsonify, request
+import os
+import sys
+import subprocess
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from database import get_db_connection, init_db, task_to_dict
 
+# Base directories
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(BACKEND_DIR, ".."))
+FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
+FRONTEND_DIST = os.path.join(FRONTEND_DIR, "dist")
+
+
+def build_frontend():
+    """
+    Build the React frontend production bundle using Vite.
+    Runs 'npm run build' inside the frontend directory so that
+    the Flask backend serves the up-to-date application bundle.
+    """
+    print("\n" + "=" * 60, flush=True)
+    print(" [TaskFlow] Building React frontend via Vite...", flush=True)
+    print(f" Working Directory: {FRONTEND_DIR}", flush=True)
+    print("=" * 60, flush=True)
+    if not os.path.exists(FRONTEND_DIR):
+        print(f" [TaskFlow ERROR] Frontend directory not found at: {FRONTEND_DIR}", flush=True)
+        print("=" * 60 + "\n", flush=True)
+        return False
+
+    try:
+        # shell=True enables Windows to resolve npm.cmd correctly
+        process = subprocess.run(
+            "npm run build",
+            cwd=FRONTEND_DIR,
+            shell=True,
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if process.returncode == 0:
+            print(" [TaskFlow] Frontend build succeeded!", flush=True)
+            print(f" Serving build assets from: {FRONTEND_DIST}", flush=True)
+            print("=" * 60 + "\n", flush=True)
+            return True
+        else:
+            print(f" [TaskFlow ERROR] Frontend build failed (exit code {process.returncode}):", flush=True)
+            if process.stdout:
+                print(process.stdout.strip(), flush=True)
+            if process.stderr:
+                print(process.stderr.strip(), flush=True)
+            print("=" * 60 + "\n", flush=True)
+            return False
+    except Exception as exc:
+        print(f" [TaskFlow EXCEPTION] Failed to execute build command: {exc}", flush=True)
+        print("=" * 60 + "\n", flush=True)
+        return False
+
+
 # 1. Initialize Flask application
-app = Flask(__name__)
+app = Flask(__name__, static_folder=None)
 
 # 2. Enable CORS (Cross-Origin Resource Sharing)
 # Allows the React frontend running on localhost:5173 to call these APIs
@@ -33,15 +87,36 @@ with app.app_context():
     init_db()
 
 
-
 # --------------------------------------------------------------------------
-# Route 0: Root API Directory Endpoint
+# Route 0: Frontend Single-Page Application (SPA) Root
 # --------------------------------------------------------------------------
 @app.route("/", methods=["GET"])
+def serve_frontend_root():
+    """
+    GET /
+    Serves the production React frontend single-page application (index.html)
+    from frontend/dist. If not yet built, attempts an automatic build.
+    """
+    index_path = os.path.join(FRONTEND_DIST, "index.html")
+    if not os.path.exists(index_path):
+        build_frontend()
+
+    if os.path.exists(index_path):
+        return send_from_directory(FRONTEND_DIST, "index.html")
+
+    return jsonify({
+        "error": "Frontend build not found.",
+        "hint": "Please run 'npm run build' inside the frontend directory or restart the backend."
+    }), 404
+
+
+# --------------------------------------------------------------------------
+# Route 0B: Root API Directory Endpoint
+# --------------------------------------------------------------------------
 @app.route("/api", methods=["GET"])
 def api_index():
     """
-    GET / and GET /api
+    GET /api
     Root API directory endpoint providing an overview of all available TaskFlow endpoints,
     service health status, and quick usage guidance.
     """
@@ -51,16 +126,38 @@ def api_index():
         "version": "1.0.0",
         "message": "TaskFlow Backend API is running successfully!",
         "endpoints": {
-            "root": "GET /",
+            "frontend_ui": "GET / (React Frontend Application)",
+            "api_index": "GET /api",
             "health": "GET /api/health",
             "get_tasks": "GET /api/tasks",
             "create_task": "POST /api/tasks",
             "update_task": "PUT /api/tasks/<id>",
             "mark_complete": "PATCH /api/tasks/<id>/complete",
-            "delete_task": "DELETE /api/tasks/<id>"
+            "delete_task": "DELETE /api/tasks/<id>",
+            "trigger_build": "POST /api/build"
         },
         "docs": "Make requests to /api/health or /api/tasks for application operations."
     }), 200
+
+
+# --------------------------------------------------------------------------
+# Route 0C: On-Demand Frontend Build Endpoint
+# --------------------------------------------------------------------------
+@app.route("/api/build", methods=["POST"])
+def trigger_build():
+    """
+    POST /api/build
+    Allows triggering a frontend rebuild on-demand via an API request.
+    """
+    success = build_frontend()
+    if success:
+        return jsonify({
+            "message": "Frontend built successfully.",
+            "dist_path": FRONTEND_DIST
+        }), 200
+    return jsonify({
+        "error": "Frontend build failed. Please check server console logs."
+    }), 500
 
 
 # --------------------------------------------------------------------------
@@ -329,38 +426,92 @@ def delete_task(task_id):
 
 
 # --------------------------------------------------------------------------
+# Route 7: Frontend Static Assets & SPA Catch-All
+# --------------------------------------------------------------------------
+@app.route("/<path:path>", methods=["GET"])
+def serve_frontend_assets(path):
+    """
+    Serve static assets (CSS, JS, SVG, images) from frontend/dist.
+    If the requested path does not match a physical file, falls back to index.html
+    to support client-side routing, while preserving 404 for missing /api routes.
+    """
+    # Guard the /api namespace from serving index.html
+    if path.startswith("api/") or path == "api":
+        return not_found(None)
+
+    # Check if a physical static file exists in frontend/dist (e.g. assets/..., favicon.svg)
+    file_path = os.path.join(FRONTEND_DIST, path)
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        return send_from_directory(FRONTEND_DIST, path)
+
+    # SPA client-side routing fallback: return index.html
+    index_file = os.path.join(FRONTEND_DIST, "index.html")
+    if os.path.exists(index_file):
+        return send_from_directory(FRONTEND_DIST, "index.html")
+
+    return not_found(None)
+
+
+# --------------------------------------------------------------------------
 # 404 Error Handler for Unknown Endpoints
 # --------------------------------------------------------------------------
 @app.errorhandler(404)
 def not_found(error):
+    # If the user requested a non-api route and index.html exists, fallback to SPA
+    if not request.path.startswith("/api"):
+        index_file = os.path.join(FRONTEND_DIST, "index.html")
+        if os.path.exists(index_file):
+            return send_from_directory(FRONTEND_DIST, "index.html")
+
     return jsonify({
         "error": "Endpoint not found. Please verify the URL and HTTP method.",
         "requested_url": request.path,
         "requested_method": request.method,
         "available_endpoints": [
-            {"method": "GET", "path": "/", "description": "API Root & Index"},
+            {"method": "GET", "path": "/", "description": "React Frontend Application UI"},
+            {"method": "GET", "path": "/api", "description": "API Root & Index"},
             {"method": "GET", "path": "/api/health", "description": "Server Health Check"},
             {"method": "GET", "path": "/api/tasks", "description": "Fetch All Tasks & Statistics"},
             {"method": "POST", "path": "/api/tasks", "description": "Create a New Task"},
             {"method": "PUT", "path": "/api/tasks/<id>", "description": "Update Task Details"},
             {"method": "PATCH", "path": "/api/tasks/<id>/complete", "description": "Mark Task Completed or Toggle"},
-            {"method": "DELETE", "path": "/api/tasks/<id>", "description": "Delete Task"}
+            {"method": "DELETE", "path": "/api/tasks/<id>", "description": "Delete Task"},
+            {"method": "POST", "path": "/api/build", "description": "Trigger Frontend Rebuild"}
         ]
     }), 404
 
 
 # --------------------------------------------------------------------------
-# Main Server Entry Point
+# Server Startup Function & Entry Point
 # --------------------------------------------------------------------------
-if __name__ == "__main__":
-    # Ensure SQLite tables exist before serving traffic
+def start_server(host="127.0.0.1", port=5000, debug=True):
+    """
+    Starts the full-stack TaskFlow server.
+    Ensures the SQLite database is initialized and builds the React frontend
+    before serving traffic. Also rebuilds whenever the server reloads.
+    """
+    # 1. Initialize SQLite schema
     init_db()
 
-    print("==================================================")
-    print(" TaskFlow Flask REST API Running")
-    print(" Local Address: http://127.0.0.1:5000")
-    print(" Database: backend/tasks.db")
-    print("==================================================")
+    # 2. Build frontend on server startup or reload.
+    # In Flask debug mode, Werkzeug reloader runs two processes: monitor and worker.
+    # The worker process has WERKZEUG_RUN_MAIN == 'true'.
+    # This ensures building runs on every auto-restart and once on initial startup.
+    is_worker = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+    index_missing = not os.path.exists(os.path.join(FRONTEND_DIST, "index.html"))
+    if is_worker or not debug or index_missing:
+        build_frontend()
 
-    # Start Flask server
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    print("==================================================", flush=True)
+    print(" TaskFlow Full-Stack Server Running", flush=True)
+    print(f" Application UI: http://{host}:{port}/", flush=True)
+    print(f" REST API Base:  http://{host}:{port}/api", flush=True)
+    print(f" Serving Bundle: {FRONTEND_DIST}", flush=True)
+    print(" Database:       backend/tasks.db", flush=True)
+    print("==================================================", flush=True)
+
+    app.run(host=host, port=port, debug=debug)
+
+
+if __name__ == "__main__":
+    start_server(host="127.0.0.1", port=5000, debug=True)

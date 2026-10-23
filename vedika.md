@@ -9,40 +9,49 @@
 
 ## 1. System Overview & Architecture
 
-TaskFlow is a decoupled full-stack task management application designed for simplicity, modularity, and high responsiveness.
+TaskFlow is a unified full-stack task management application designed for simplicity, modularity, and high responsiveness.
 
-- **Frontend**: Single-page application built with **React** running on top of **Vite**. Handles user interactions, local state, and asynchronous API calls.
-- **Backend**: Lightweight REST API built with **Python Flask** and **flask-cors**. Exposes standard HTTP endpoints (`GET`, `POST`, `PUT`, `DELETE`).
+- **Frontend**: Single-page application built with **React** and styled with modern dark glassmorphism. Compiled into optimized static assets via **Vite**.
+- **Backend**: Lightweight REST API built with **Python Flask** and **flask-cors**. Not only handles REST API requests, but also automatically builds the React frontend on startup/restart and directly serves the SPA bundle at `/`.
 - **Database**: Embedded **SQLite** database (`tasks.db`), requiring no standalone database server, storing task records with automatic schema initialization.
-- **Communication Protocol**: JSON over HTTP REST API.
+- **Communication Protocol**: Same-origin `/api` HTTP REST API when served by Flask, with Vite reverse proxy support during standalone frontend development.
 
 ### High-Level Architecture Diagram
 
 ```mermaid
 graph TD
     User["User (Browser)"]
-    subgraph Frontend ["Frontend (React + Vite : Port 5173)"]
-        UI["React Components (TaskForm, TaskList, TaskSummary)"]
-        State["State Management (useState / useEffect)"]
-        APIClient["API Service (fetch / JSON)"]
-    end
+    
+    subgraph FullStackServer ["Flask Full-Stack Server (: Port 5000)"]
+        subgraph StaticServer ["Frontend Static Asset Server"]
+            RootHandler["SPA Root Handler (GET /) -> index.html"]
+            AssetHandler["Asset Handler (GET /assets/*, /favicon.svg)"]
+            SPAFallback["Client Route Fallback Handler"]
+        end
+        
+        subgraph APIServer ["Backend REST API Endpoints"]
+            APIRouter["API Router (/api/*)"]
+            CORS["CORS Middleware"]
+            BuildEndpoint["On-Demand Build Endpoint (POST /api/build)"]
+            DBHandler["Database Module (database.py)"]
+        end
 
-    subgraph Backend ["Backend (Flask REST API : Port 5000)"]
-        FlaskRouter["Flask App (app.py)"]
-        CORS["CORS Middleware (flask-cors)"]
-        DBHandler["Database Module (database.py)"]
+        subgraph AutoBuildSystem ["Auto-Build Subsystem"]
+            BuildTrigger["Startup / Reloader Hook"] --> ViteBuilder["Vite Compiler ('npm run build')"]
+            ViteBuilder --> DistOutput["Compiled Bundle ('frontend/dist/')"]
+        end
     end
 
     subgraph Storage ["Persistent Storage"]
         SQLite[("SQLite Database (tasks.db)")]
     end
 
-    User <-->|User Events / Visual UI| UI
-    UI <--> State
-    State <--> APIClient
-    APIClient <-->|HTTP REST / JSON (GET, POST, PUT, DELETE)| FlaskRouter
-    FlaskRouter --- CORS
-    FlaskRouter <--> DBHandler
+    User <-->|HTTP GET / (Loads React SPA)| RootHandler
+    User <-->|HTTP GET /assets/ (Loads JS & CSS)| AssetHandler
+    User <-->|HTTP REST /api/tasks (JSON CRUD)| APIRouter
+    DistOutput -.->|Serves Files From| RootHandler
+    DistOutput -.->|Serves Files From| AssetHandler
+    APIRouter <--> DBHandler
     DBHandler <-->|SQL Queries (CRUD)| SQLite
 ```
 
@@ -52,6 +61,7 @@ graph TD
 
 ```text
 TaskFlow/
+├── README.md                 # Public GitHub showcase documentation
 ├── .gitignore                # Root Git exclusion policy
 ├── package.json              # Root npm workspace script runner (npm run dev/build)
 ├── app.py                    # Root convenience launcher for Flask backend
@@ -150,51 +160,48 @@ flowchart TD
 
 ---
 
-## 4. REST API Contract
+## 4. REST API & Endpoint Contract
 
 | HTTP Method | Endpoint | Aliases | Description | Request Body | Response (Status) |
 |---|---|---|---|---|---|
-| `GET` | `/` | `/api` | Root API directory & health index | None | `{"name": "TaskFlow REST API", "status": "online", "endpoints": {...}}` (200) |
+| `GET` | `/` | — | Serves compiled React Frontend SPA (`index.html`) | None | HTML Document (200) |
+| `GET` | `/api` | — | Root API directory & health index | None | `{"name": "TaskFlow REST API", "status": "online", "endpoints": {...}}` (200) |
 | `GET` | `/api/health` | `/health` | Health check endpoint | None | `{"status": "ok", "message": "..."}` (200) |
-| `GET` | `/api/tasks` | `/tasks` | Fetch all tasks & stats | None | `{"tasks": [...], "stats": {"total": 0, "pending": 0, "completed": 0}}` (200) |
+| `GET` | `/api/tasks` | `/tasks` | Fetch all tasks & summary stats | None | `{"tasks": [...], "stats": {"total": 0, "pending": 0, "completed": 0}}` (200) |
 | `POST` | `/api/tasks` | `/tasks` | Create a new task | `{"title": "...", "description": "..."}` | `{"task": {...}, "message": "Created"}` (201) |
 | `PUT` | `/api/tasks/<id>` | `/tasks/<id>` | Update title / description / completed | `{"title": "...", "description": "...", "completed": true}` | `{"task": {...}, "message": "Updated"}` (200) |
 | `PATCH` | `/api/tasks/<id>/complete` | `/tasks/<id>/complete` | Toggle task completion | `{"completed": true/false}` (optional) | `{"task": {...}, "message": "..."}` (200) |
 | `DELETE` | `/api/tasks/<id>` | `/tasks/<id>` | Delete a task | None | `{"message": "Task deleted successfully"}` (200) |
+| `POST` | `/api/build` | — | Trigger on-demand frontend rebuild | None | `{"message": "Frontend built successfully.", "dist_path": "..."}` (200) |
+| `GET` | `/<path:path>` | — | Serves static assets (`assets/*`, `favicon.svg`) or falls back to `index.html` (SPA routing) | None | Static file / HTML (200) |
 
 ---
 
 ## 5. Execution Guide & Terminal Commands
 
-### Option A: Running from Project Root (Recommended)
+### Option A: Unified Full-Stack Server (Recommended)
 ```powershell
-# In the TaskFlow root directory:
+# From the TaskFlow root directory:
 .\backend\venv\Scripts\python.exe app.py
+# Or via npm script:
+npm start
 ```
-> The project-level `app.py` automatically initializes SQLite and delegates execution to `backend/app.py`.
+> **What Happens Automatically**:
+> 1. Flask verifies/initializes the SQLite database (`tasks.db`).
+> 2. Vite compiles the React frontend (`npm run build`).
+> 3. Flask boots and serves the compiled application at `http://127.0.0.1:5000/`.
+> 4. Any backend code edits automatically reload the server AND rebuild the frontend!
 
-### Option B: Running from Backend Directory
+### Option B: Standalone Frontend Development (Optional Hot-Reloading)
 ```powershell
-# 1. Navigate to backend
-cd "c:\Users\VEDIKA MANDE\OneDrive\Pictures\Desktop\TaskFlow\backend"
+# Terminal 1: Backend
+.\backend\venv\Scripts\python.exe app.py
 
-# 2. Activate virtual environment
-.\venv\Scripts\Activate.ps1
-
-# 3. Start the Flask server
-python app.py
-```
-> The backend server runs at `http://127.0.0.1:5000`.
-
-### Terminal 2: Frontend Server (React + Vite)
-```powershell
-# 1. Navigate to frontend
-cd "c:\Users\VEDIKA MANDE\OneDrive\Pictures\Desktop\TaskFlow\frontend"
-
-# 2. Start Vite development server
+# Terminal 2: Frontend (Vite with HMR)
+cd frontend
 npm run dev
 ```
-> The frontend server runs at `http://localhost:5173/`. Requests to `/api/*` are proxied to `http://127.0.0.1:5000`.
+> When running standalone, Vite runs on `http://localhost:5173/` and proxies `/api/*` to `http://127.0.0.1:5000/`.
 
 ---
 
@@ -430,6 +437,78 @@ git branch -M main
 git remote add origin https://github.com/<your-username>/TaskFlow.git
 git push -u origin main
 ```
+
+---
+
+## 10. Unified Full-Stack Serving & Auto-Build Pipeline
+
+### Problem & Requirement
+Previously, running TaskFlow required two separate terminal processes:
+1. Flask backend running on `http://127.0.0.1:5000`
+2. Vite dev server running on `http://localhost:5173`
+
+The user requested that the **backend serve the frontend directly**, and that **whenever the backend starts or restarts, it should automatically build the React frontend and serve it correctly**.
+
+### Architectural Solution
+We redesigned the backend runner and routing structure to create a self-contained, full-stack application lifecycle:
+
+```mermaid
+flowchart TD
+    Start["User starts server ('python app.py')"] --> RootApp["Root app.py Launcher"]
+    RootApp --> AbsPath["sys.argv[0] = os.path.abspath(sys.argv[0])<br/>Preserves runner path across Werkzeug restarts"]
+    AbsPath --> StartServer["taskflow_backend.start_server()"]
+    
+    StartServer --> InitDB["init_db()<br/>Verify SQLite Schema & Seed Data"]
+    InitDB --> WorkerCheck{"Is Active Worker or Reloader?<br/>(WERKZEUG_RUN_MAIN == 'true' OR non-debug)"}
+    
+    WorkerCheck -->|Yes| RunBuild["build_frontend()<br/>Executes 'npm run build' in frontend/"]
+    WorkerCheck -->|No (Master process)| CheckMissing{"dist/index.html missing?"}
+    CheckMissing -->|Yes| RunBuild
+    CheckMissing -->|No| BootFlask["app.run(host='127.0.0.1', port=5000, debug=True)"]
+    RunBuild --> BootFlask
+
+    BootFlask --> Serving["Flask Listening on http://127.0.0.1:5000"]
+    
+    Serving --> Req{"Incoming Request Path"}
+    Req -->|GET /| ServeRoot["serve_frontend_root()<br/>Returns frontend/dist/index.html"]
+    Req -->|GET /assets/* or static files| ServeAsset["serve_frontend_assets()<br/>Returns static bundle files with MIME types"]
+    Req -->|GET /api/* or POST/PUT/DELETE| APIHandler["Execute REST API Endpoint (tasks, health, etc.)"]
+    Req -->|POST /api/build| ManualBuild["trigger_build()<br/>Executes on-demand frontend build"]
+    Req -->|Other client routes| Fallback["SPA Catch-All Route<br/>Returns frontend/dist/index.html"]
+
+    Serving -.->|Backend File Modified| ReloadEvent["Werkzeug File Watcher Detects Change"]
+    ReloadEvent --> StatRestart["Werkzeug Reloader Triggers Process Restart"]
+    StatRestart --> AbsPath
+```
+
+### Key Logic Implementations
+
+1. **Automatic Frontend Build (`build_frontend`)**:
+   - Executes `npm run build` using Python's `subprocess.run(..., cwd=FRONTEND_DIR, shell=True)`.
+   - Utilizes `shell=True` to resolve `npm.cmd` on Windows.
+   - Flushes output immediately (`flush=True`) to provide real-time console feedback.
+   - Logs compilation success and build destination (`frontend/dist`).
+
+2. **Werkzeug Reloader Lifecycle Hook**:
+   - In Flask debug mode (`debug=True`), Werkzeug spawns a worker process with `WERKZEUG_RUN_MAIN == 'true'`.
+   - On initial boot, the worker builds the bundle.
+   - Whenever backend code is modified, Werkzeug triggers a restart, launching a fresh worker with `WERKZEUG_RUN_MAIN == 'true'`, which automatically invokes `build_frontend()` to guarantee the served assets match the latest codebase.
+   - To prevent path loss during restarts caused by `os.chdir()`, `sys.argv[0]` is explicitly resolved to its absolute path (`sys.argv[0] = os.path.abspath(sys.argv[0])`).
+
+3. **Routing & Static Asset Pipeline**:
+   - **`GET /`**: Serves `frontend/dist/index.html`. If the file is not yet built, it automatically invokes `build_frontend()` on the fly.
+   - **`GET /<path:path>`**: Validates if the requested file exists physically in `frontend/dist/` (such as `/assets/index-xxx.js`, `/assets/index-xxx.css`, or `/favicon.svg`). If so, returns it with proper caching and MIME headers via `send_from_directory()`.
+   - **SPA Routing Fallback**: If a route is requested that is not under `/api/*` and does not match a static file, it safely falls back to `index.html`, allowing React Router or client-side navigation to function.
+   - **API Isolation**: All `/api/*` paths bypass the static fallback and return strict JSON (including HTTP 404 with documentation links if an unknown API endpoint is requested).
+
+4. **Frontend API Configuration (`taskApi.js`)**:
+   - Updated `API_BASE_URL` from hardcoded `'http://127.0.0.1:5000/api'` to relative `'/api'`.
+   - When loaded through the Flask backend (`http://127.0.0.1:5000`), requests to `/api` are same-origin, eliminating CORS overhead and working regardless of host (`localhost`, `127.0.0.1`, or LAN IP).
+   - In standalone Vite dev server mode (`http://localhost:5173`), Vite's proxy automatically routes `/api` to `http://127.0.0.1:5000/api`.
+
+5. **On-Demand Build Endpoint (`POST /api/build`)**:
+   - Provides a dedicated REST trigger for automated pipelines or developer convenience to rebuild frontend assets without restarting the server.
+
 
 
 
